@@ -6,38 +6,37 @@ import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
-import kotlin.math.hypot
 
 /**
- * Records the user's unlock gesture (pattern/swipe) and stores it as a root
- * script that replays it via `input touchscreen motionevent` on unlock.
+ * Records the user's pattern (3x3, 9 dots) and stores it as a root script that
+ * replays the connecting gesture via `input touchscreen motionevent` on unlock.
  */
 class GestureRecorderActivity : AppCompatActivity() {
 
-    private lateinit var pad: GesturePadView
+    private lateinit var pad: PatternPadView
     private lateinit var btnSave: MaterialButton
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_gesture)
 
-        pad = GesturePadView(this)
+        pad = PatternPadView(this)
         findViewById<FrameLayout>(R.id.padContainer).addView(pad)
 
         btnSave = findViewById(R.id.btnSave)
         val btnClear = findViewById<MaterialButton>(R.id.btnClear)
 
-        pad.onChanged = { btnSave.isEnabled = pad.hasGesture() }
-        btnClear.setOnClickListener { pad.clear() }
+        pad.onChanged = { btnSave.isEnabled = pad.hasPattern() }
+        btnClear.setOnClickListener { pad.clearPattern() }
         btnSave.setOnClickListener { save() }
     }
 
     private fun save() {
-        if (!pad.hasGesture()) {
-            Toast.makeText(this, "בצעו מחווה תחילה", Toast.LENGTH_SHORT).show()
+        if (!pad.hasPattern()) {
+            Toast.makeText(this, "חברו לפחות 2 נקודות", Toast.LENGTH_SHORT).show()
             return
         }
-        val script = buildScript(pad.rawPoints)
+        val script = buildScript(pad.selectedScreenPoints())
         val prefs = Prefs(this)
         prefs.customScript = script
         prefs.pin = null
@@ -45,37 +44,37 @@ class GestureRecorderActivity : AppCompatActivity() {
         finish()
     }
 
-    /** Build a root replay script: wake, reveal bouncer, then the recorded gesture. */
-    private fun buildScript(points: List<PointF>): String {
+    /** Wake, reveal the bouncer, then replay the pattern path across the dots. */
+    private fun buildScript(dots: List<PointF>): String {
         val dm = resources.displayMetrics
         val w = dm.widthPixels
         val h = dm.heightPixels
 
-        // Downsample to keep the command list short but faithful.
-        val kept = ArrayList<PointF>()
-        for (p in points) {
-            if (kept.isEmpty() || hypot((p.x - kept.last().x).toDouble(), (p.y - kept.last().y).toDouble()) > 24.0) {
-                kept.add(p)
-            }
-        }
-        if (kept.last() != points.last()) kept.add(points.last())
-
         val lines = ArrayList<String>()
         lines.add("input keyevent 224")               // wake
         lines.add("sleep 0.6")
-        // Reveal the bouncer (many lock screens need a swipe up first).
         lines.add("input touchscreen swipe ${w / 2} ${(h * 0.80).toInt()} ${w / 2} ${(h * 0.30).toInt()} 150")
         lines.add("sleep 0.5")
 
-        val first = kept.first()
+        val first = dots.first()
         lines.add("input touchscreen motionevent DOWN ${first.x.toInt()} ${first.y.toInt()}")
-        for (i in 1 until kept.size) {
-            val p = kept[i]
-            lines.add("input touchscreen motionevent MOVE ${p.x.toInt()} ${p.y.toInt()}")
-        }
-        val last = kept.last()
-        lines.add("input touchscreen motionevent UP ${last.x.toInt()} ${last.y.toInt()}")
 
+        // Step through each dot, adding interpolated points so the path reliably
+        // crosses every dot center.
+        val steps = 4
+        for (i in 1 until dots.size) {
+            val a = dots[i - 1]
+            val b = dots[i]
+            for (s in 1..steps) {
+                val t = s.toFloat() / steps
+                val x = (a.x + (b.x - a.x) * t).toInt()
+                val y = (a.y + (b.y - a.y) * t).toInt()
+                lines.add("input touchscreen motionevent MOVE $x $y")
+            }
+        }
+
+        val last = dots.last()
+        lines.add("input touchscreen motionevent UP ${last.x.toInt()} ${last.y.toInt()}")
         return lines.joinToString("\n")
     }
 }

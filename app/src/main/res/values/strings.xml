@@ -40,7 +40,7 @@
     <string name="test_blink">זוהה! מצמצו עכשיו 👁️</string>
     <string name="test_success">פתיחה הייתה מצליחה ✓</string>
 
-    <string name="gesture_hint">בצעו את תבנית / סימן הפתיחה שלכם על המסך</string>
+    <string name="gesture_hint">חברו את הנקודות לפי תבנית הפתיחה שלכם</string>
     <string name="gesture_saved">המחווה נשמרה</string>
     <string name="gesture_clear">ניקוי</string>
     <string name="gesture_save">שמירה</string>
