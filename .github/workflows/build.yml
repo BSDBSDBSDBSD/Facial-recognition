@@ -31,27 +31,27 @@ jobs:
           set -e
           mkdir -p app/src/main/assets
           OUT=app/src/main/assets/mobile_face_net.tflite
-          # Candidate MobileFaceNet sources, tried in order.
-          URLS=(
-            "https://github.com/estebanuri/face_recognition/raw/master/android/facerecognition/app/src/main/assets/mobile_face_net.tflite"
-            "https://github.com/shubham0204/FaceRecognition_With_FaceNet_Android/raw/master/app/src/main/assets/mobile_face_net.tflite"
-            "https://github.com/dedoogong/FaceRecognition_With_MobileFaceNet/raw/master/app/src/main/assets/mobile_face_net.tflite"
-          )
+          valid() { [ -f "$1" ] && [ "$(wc -c < "$1")" -gt 1000000 ] \
+            && [ "$(dd if="$1" bs=1 skip=4 count=4 2>/dev/null)" = "TFL3" ]; }
+
           ok=0
-          for u in "${URLS[@]}"; do
-            echo "Trying $u"
-            if curl -fsSL "$u" -o "$OUT" && [ "$(wc -c < "$OUT")" -gt 1000000 ] \
-               && [ "$(dd if="$OUT" bs=1 skip=4 count=4 2>/dev/null)" = "TFL3" ]; then
-              echo "Got a valid MobileFaceNet model from $u"
-              ok=1; break
-            fi
-          done
+          # Primary: real MobileFaceNet (112x112 -> 192) shipped inside the
+          # offline_face_recognition pub.dev package.
+          echo "Fetching MobileFaceNet from pub.dev..."
+          if curl -fsSL "https://pub.dev/api/archives/offline_face_recognition-0.1.1.tar.gz" -o pkg.tgz; then
+            mkdir -p pkg && tar xzf pkg.tgz -C pkg || true
+            f="$(find pkg -iname '*.tflite' -size +1M | head -n1)"
+            if [ -n "$f" ]; then cp "$f" "$OUT"; fi
+            valid "$OUT" && { echo "Got MobileFaceNet ($(wc -c < "$OUT") bytes)"; ok=1; }
+          fi
+
           if [ "$ok" -ne 1 ]; then
             echo "::warning::MobileFaceNet unavailable; falling back to Google MobileNetV3 embedder (weaker identity separation)."
             curl -fsSL "https://storage.googleapis.com/mediapipe-models/image_embedder/mobilenet_v3_small/float32/1/mobilenet_v3_small.tflite" -o "$OUT"
           fi
+
           ls -la "$OUT"
-          [ "$(dd if="$OUT" bs=1 skip=4 count=4 2>/dev/null)" = "TFL3" ] || { echo "No valid TFLite model"; exit 1; }
+          valid "$OUT" || { echo "No valid TFLite model"; exit 1; }
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
