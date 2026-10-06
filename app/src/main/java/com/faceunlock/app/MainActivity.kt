@@ -3,86 +3,120 @@ package com.faceunlock.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
-import android.view.Gravity
-import android.view.ViewGroup
-import android.widget.Button
+import android.view.View
 import android.widget.EditText
-import android.widget.LinearLayout
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.materialswitch.MaterialSwitch
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
 
     private lateinit var prefs: Prefs
-    private lateinit var status: TextView
+    private lateinit var statusText: TextView
+    private lateinit var btnToggle: MaterialButton
+    private lateinit var switchBlink: MaterialSwitch
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
-        setContentView(buildUi())
+        setContentView(R.layout.activity_main)
+
+        statusText = findViewById(R.id.statusText)
+        btnToggle = findViewById(R.id.btnToggleService)
+        switchBlink = findViewById(R.id.switchBlink)
+
+        btnToggle.setOnClickListener { toggleService() }
+        switchBlink.isChecked = prefs.requireBlink
+        switchBlink.setOnCheckedChangeListener { _, v -> prefs.requireBlink = v }
+
+        configCards()
         requestNeededPermissions()
-        refreshStatus()
     }
 
     override fun onResume() {
         super.onResume()
-        refreshStatus()
+        refresh()
     }
 
-    private fun buildUi(): LinearLayout {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(48, 64, 48, 48)
-        }
+    private fun configCards() {
+        configCard(
+            R.id.cardFace, R.drawable.ic_face,
+            getString(R.string.card_face_title), getString(R.string.card_face_sub),
+            getString(R.string.btn_enroll), {
+                if (hasCamera()) startActivity(Intent(this, EnrollActivity::class.java))
+                else toast("צריך הרשאת מצלמה")
+            },
+            getString(R.string.btn_reset_faces), {
+                prefs.clearEmbeddings(); toast("הפנים אופסו"); refresh()
+            }
+        )
 
-        val title = TextView(this).apply {
-            text = "זיהוי פנים — פתיחת מכשיר"
-            textSize = 22f
-            setTextColor(Color.BLACK)
-            gravity = Gravity.CENTER
-        }
-        root.addView(title)
+        configCard(
+            R.id.cardUnlock, R.drawable.ic_lock,
+            getString(R.string.card_unlock_title), getString(R.string.card_unlock_sub),
+            getString(R.string.btn_set_pin), { askPin() },
+            getString(R.string.btn_record_gesture), {
+                startActivity(Intent(this, GestureRecorderActivity::class.java))
+            }
+        )
 
-        status = TextView(this).apply {
-            textSize = 15f
-            setPadding(0, 32, 0, 32)
-        }
-        root.addView(status)
+        configCard(
+            R.id.cardTest, R.drawable.ic_test,
+            getString(R.string.card_test_title), getString(R.string.card_test_sub),
+            getString(R.string.btn_test), {
+                if (prefs.faceCount == 0) { toast("קודם רשמו פנים"); return@configCard }
+                if (!hasCamera()) { toast("צריך הרשאת מצלמה"); return@configCard }
+                startActivity(Intent(this, TestActivity::class.java))
+            },
+            null, null
+        )
 
-        root.addView(button("רישום פנים") {
-            if (hasCamera()) startActivity(Intent(this, EnrollActivity::class.java))
-            else toast("צריך הרשאת מצלמה")
-        })
-
-        root.addView(button("הגדרת קוד (PIN)") { askPin() })
-
-        root.addView(button("סקריפט פתיחה מותאם (תבנית/סיסמה)") { askScript() })
-
-        root.addView(button("בדיקת רוט") {
-            toast(if (RootShell.hasRoot()) "רוט תקין ✓" else "אין גישת רוט ✗")
-        })
-
-        root.addView(button("הפעל / כבה שירות") { toggleService() })
-
-        return root
+        configCard(
+            R.id.cardRoot, R.drawable.ic_root,
+            getString(R.string.card_root_title), getString(R.string.card_root_sub),
+            getString(R.string.btn_check_root), {
+                toast(if (RootShell.hasRoot()) "רוט תקין ✓" else "אין גישת רוט ✗")
+            },
+            null, null
+        )
     }
 
-    private fun button(label: String, onClick: () -> Unit): Button {
-        return Button(this).apply {
-            text = label
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 20 }
-            setOnClickListener { onClick() }
+    private fun configCard(
+        cardId: Int, iconRes: Int, title: String, sub: String,
+        primaryText: String, primaryAction: () -> Unit,
+        secondaryText: String?, secondaryAction: (() -> Unit)?
+    ) {
+        val card = findViewById<View>(cardId)
+        card.findViewById<ImageView>(R.id.cardIcon).setImageResource(iconRes)
+        card.findViewById<TextView>(R.id.cardTitle).text = title
+        card.findViewById<TextView>(R.id.cardSub).text = sub
+        card.findViewById<MaterialButton>(R.id.btnPrimary).apply {
+            text = primaryText
+            setOnClickListener { primaryAction() }
         }
+        val sec = card.findViewById<MaterialButton>(R.id.btnSecondary)
+        if (secondaryText != null && secondaryAction != null) {
+            sec.visibility = View.VISIBLE
+            sec.text = secondaryText
+            sec.setOnClickListener { secondaryAction() }
+        } else {
+            sec.visibility = View.GONE
+        }
+    }
+
+    private fun cardInfo(cardId: Int, text: String, ok: Boolean) {
+        val tv = findViewById<View>(cardId).findViewById<TextView>(R.id.cardInfo)
+        tv.text = text
+        tv.setTextColor(ContextCompat.getColor(this, if (ok) R.color.accent else R.color.text_secondary))
     }
 
     private fun askPin() {
@@ -90,73 +124,51 @@ class MainActivity : ComponentActivity() {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
             hint = "הקוד הנוכחי של המכשיר"
         }
-        android.app.AlertDialog.Builder(this)
+        AlertDialog.Builder(this)
             .setTitle("הגדרת PIN")
-            .setMessage("הזן את קוד הנעילה הקיים של המכשיר. הוא נשמר מוצפן ומוזרק רק בזיהוי מוצלח.")
+            .setMessage("הזינו את קוד הנעילה הקיים של המכשיר. הוא נשמר מוצפן ומוזרק רק אחרי זיהוי מוצלח.")
             .setView(input)
-            .setPositiveButton("שמור") { _, _ ->
+            .setPositiveButton("שמירה") { _, _ ->
                 prefs.pin = input.text.toString()
                 prefs.customScript = null
-                toast("נשמר")
-                refreshStatus()
-            }
-            .setNegativeButton("ביטול", null)
-            .show()
-    }
-
-    private fun askScript() {
-        val input = EditText(this).apply {
-            hint = "פקודות input, שורה לכל פקודה"
-        }
-        android.app.AlertDialog.Builder(this)
-            .setTitle("סקריפט פתיחה מותאם")
-            .setMessage("למתקדמים: רצף פקודות shell (למשל input swipe/keyevent) לפתיחת תבנית או סיסמה. גובר על ה-PIN.")
-            .setView(input)
-            .setPositiveButton("שמור") { _, _ ->
-                val t = input.text.toString()
-                prefs.customScript = if (t.isBlank()) null else t
-                toast("נשמר")
-                refreshStatus()
-            }
-            .setNeutralButton("נקה") { _, _ ->
-                prefs.customScript = null; refreshStatus()
+                toast("נשמר"); refresh()
             }
             .setNegativeButton("ביטול", null)
             .show()
     }
 
     private fun toggleService() {
-        if (!prefs.isEnrolled) {
-            toast("צריך קודם לרשום פנים ולהגדיר קוד")
-            return
-        }
         if (prefs.serviceEnabled) {
             prefs.serviceEnabled = false
             FaceUnlockService.stop(this)
             toast("השירות כובה")
         } else {
-            if (!RootShell.hasRoot()) {
-                toast("אין רוט — הפתיחה לא תעבוד"); return
-            }
+            if (!prefs.isEnrolled) { toast("קודם רשמו פנים והגדירו קוד/מחווה"); return }
+            if (!RootShell.hasRoot()) { toast("אין רוט — הפתיחה לא תעבוד"); return }
             prefs.serviceEnabled = true
             FaceUnlockService.start(this)
             toast("השירות הופעל")
         }
-        refreshStatus()
+        refresh()
     }
 
-    private fun refreshStatus() {
-        val sb = StringBuilder()
-        sb.append(if (prefs.embedding != null) "פנים: רשום ✓\n" else "פנים: לא רשום ✗\n")
-        sb.append(
-            when {
-                prefs.customScript != null -> "פתיחה: סקריפט מותאם ✓\n"
-                prefs.pin != null -> "פתיחה: PIN ✓\n"
-                else -> "פתיחה: לא הוגדר ✗\n"
-            }
+    private fun refresh() {
+        val on = prefs.serviceEnabled
+        statusText.text = getString(if (on) R.string.service_on else R.string.service_off)
+        statusText.setTextColor(
+            ContextCompat.getColor(this, if (on) R.color.success else R.color.text_secondary)
         )
-        sb.append(if (prefs.serviceEnabled) "שירות: פעיל ✓" else "שירות: כבוי")
-        status.text = sb.toString()
+        btnToggle.setText(if (on) R.string.disable_service else R.string.enable_service)
+
+        val n = prefs.faceCount
+        cardInfo(R.id.cardFace, if (n > 0) "$n פנים ✓" else "אין", n > 0)
+
+        val method = when {
+            prefs.customScript != null -> "מחווה ✓"
+            prefs.pin != null -> "PIN ✓"
+            else -> "לא הוגדר"
+        }
+        cardInfo(R.id.cardUnlock, method, prefs.hasUnlockMethod)
     }
 
     private fun hasCamera() =

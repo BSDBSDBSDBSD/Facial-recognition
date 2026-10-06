@@ -13,10 +13,11 @@
 
     <application
         android:allowBackup="false"
-        android:icon="@android:drawable/ic_lock_lock"
-        android:label="Face Unlock"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.Light.DarkActionBar">
+        android:theme="@style/Theme.FaceUnlock">
 
         <activity
             android:name=".MainActivity"
@@ -27,9 +28,12 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".EnrollActivity" android:exported="false" />
+        <activity android:name=".TestActivity" android:exported="false" />
         <activity
-            android:name=".EnrollActivity"
-            android:exported="false" />
+            android:name=".GestureRecorderActivity"
+            android:exported="false"
+            android:theme="@style/Theme.FaceUnlock" />
 
         <service
             android:name=".FaceUnlockService"

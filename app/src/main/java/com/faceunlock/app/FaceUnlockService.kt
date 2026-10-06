@@ -9,8 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
-import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -142,15 +140,17 @@ class FaceUnlockService : LifecycleService() {
     private fun analyze(proxy: ImageProxy) {
         try {
             if (done || !running) return
-            val bmp = proxy.toBitmapUpright() ?: return
+            val bmp = CameraUtil.upright(proxy) ?: return
             val result = processor?.process(bmp) ?: return
 
-            val enrolled = prefs.embedding ?: return
-            val sim = FaceRecognizer.cosineSimilarity(enrolled, result.embedding)
+            val enrolled = prefs.embeddings()
+            if (enrolled.isEmpty()) return
+            val sim = enrolled.maxOf { FaceRecognizer.cosineSimilarity(it, result.embedding) }
             if (sim < Constants.MATCH_THRESHOLD) return
 
-            // Face matches — now require a blink for liveness.
-            if (advanceBlink(result)) {
+            // Face matches — require a blink for liveness (unless disabled).
+            val live = if (prefs.requireBlink) advanceBlink(result) else true
+            if (live) {
                 done = true
                 main.post { performUnlock() }
             }
@@ -210,18 +210,6 @@ class FaceUnlockService : LifecycleService() {
     }
 
     private fun mainExecutorCompat() = androidx.core.content.ContextCompat.getMainExecutor(this)
-
-    private fun ImageProxy.toBitmapUpright(): Bitmap? {
-        val bitmap = try {
-            this.toBitmap()
-        } catch (e: Exception) {
-            Log.e(TAG, "toBitmap failed", e); return null
-        }
-        val deg = imageInfo.rotationDegrees
-        if (deg == 0) return bitmap
-        val m = Matrix().apply { postRotate(deg.toFloat()) }
-        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, m, true)
-    }
 
     companion object {
         private const val TAG = "FaceUnlockService"

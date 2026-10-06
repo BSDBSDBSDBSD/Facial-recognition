@@ -5,7 +5,7 @@ import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
-/** Encrypted storage for the unlock PIN and the enrolled face embedding. */
+/** Encrypted storage for the unlock PIN and the enrolled face embeddings. */
 class Prefs(context: Context) {
 
     private val prefs: SharedPreferences
@@ -35,23 +35,41 @@ class Prefs(context: Context) {
         get() = prefs.getBoolean("service_enabled", false)
         set(value) = prefs.edit().putBoolean("service_enabled", value).apply()
 
-    var embedding: FloatArray?
-        get() {
-            val s = prefs.getString("embedding", null) ?: return null
-            return try {
-                s.split(",").map { it.toFloat() }.toFloatArray()
+    var requireBlink: Boolean
+        get() = prefs.getBoolean("require_blink", true)
+        set(value) = prefs.edit().putBoolean("require_blink", value).apply()
+
+    /** Multiple enrolled face embeddings (different angles). */
+    fun embeddings(): List<FloatArray> {
+        val s = prefs.getString("embeddings", null) ?: return emptyList()
+        if (s.isBlank()) return emptyList()
+        return s.split(";").mapNotNull { row ->
+            try {
+                row.split(",").map { it.toFloat() }.toFloatArray()
             } catch (e: Exception) {
                 null
             }
         }
-        set(value) {
-            if (value == null) {
-                prefs.edit().remove("embedding").apply()
-            } else {
-                prefs.edit().putString("embedding", value.joinToString(",")).apply()
-            }
-        }
+    }
+
+    fun addEmbedding(e: FloatArray) {
+        val cur = embeddings().toMutableList()
+        cur.add(e)
+        saveEmbeddings(cur)
+    }
+
+    fun saveEmbeddings(list: List<FloatArray>) {
+        val s = list.joinToString(";") { it.joinToString(",") }
+        prefs.edit().putString("embeddings", s).apply()
+    }
+
+    fun clearEmbeddings() = prefs.edit().remove("embeddings").apply()
+
+    val faceCount: Int get() = embeddings().size
+
+    val hasUnlockMethod: Boolean
+        get() = pin != null || customScript != null
 
     val isEnrolled: Boolean
-        get() = embedding != null && (pin != null || customScript != null)
+        get() = faceCount > 0 && hasUnlockMethod
 }

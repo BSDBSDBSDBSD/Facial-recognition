@@ -1,8 +1,6 @@
 package com.faceunlock.app
 
-import android.graphics.Color
 import android.os.Bundle
-import android.os.SystemClock
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -16,30 +14,31 @@ import androidx.core.content.ContextCompat
 import com.google.android.material.button.MaterialButton
 import java.util.concurrent.Executors
 
-class EnrollActivity : AppCompatActivity() {
+/** Dry-run: verifies recognition + blink without actually unlocking. */
+class TestActivity : AppCompatActivity() {
 
     private val executor = Executors.newSingleThreadExecutor()
     private var processor: FaceProcessor? = null
+    private var enrolled: List<FloatArray> = emptyList()
+    private var requireBlink = true
 
-    private val samples = mutableListOf<FloatArray>()
-    private var lastCapture = 0L
-    private val target = 5
+    private enum class Blink { WAIT_OPEN_1, WAIT_CLOSE, WAIT_OPEN_2, DONE }
+    @Volatile private var blink = Blink.WAIT_OPEN_1
+    @Volatile private var finished = false
 
     private lateinit var statusText: TextView
-    private lateinit var progressText: TextView
-    private lateinit var btnSave: MaterialButton
+    private lateinit var simText: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_enroll)
-
+        setContentView(R.layout.activity_test)
         statusText = findViewById(R.id.statusText)
-        progressText = findViewById(R.id.progressText)
-        btnSave = findViewById(R.id.btnSave)
+        simText = findViewById(R.id.simText)
         val previewView = findViewById<PreviewView>(R.id.previewView)
 
-        updateProgress()
-        btnSave.setOnClickListener { save() }
+        val prefs = Prefs(this)
+        enrolled = prefs.embeddings()
+        requireBlink = prefs.requireBlink
 
         processor = try {
             FaceProcessor(this)
@@ -68,19 +67,32 @@ class EnrollActivity : AppCompatActivity() {
 
     private fun analyze(proxy: ImageProxy) {
         try {
+            if (finished) return
             val bmp = CameraUtil.upright(proxy) ?: return
-            val r = processor?.process(bmp)
-            if (r == null) {
-                runOnUiThread { statusText.text = getString(R.string.searching) }
+            val r = processor?.process(bmp) ?: run {
+                runOnUiThread { statusText.setText(R.string.test_prompt) }
                 return
             }
-            runOnUiThread { statusText.setText(R.string.enroll_hint) }
+            if (enrolled.isEmpty()) return
+            val sim = enrolled.maxOf { FaceRecognizer.cosineSimilarity(it, r.embedding) }
+            runOnUiThread { simText.text = "דמיון: ${"%.2f".format(sim)}" }
 
-            val now = SystemClock.elapsedRealtime()
-            if (samples.size < target && now - lastCapture > 700 && isDistinct(r.embedding)) {
-                lastCapture = now
-                samples.add(r.embedding)
-                runOnUiThread { updateProgress() }
+            val matched = sim >= Constants.MATCH_THRESHOLD
+            if (!matched) {
+                runOnUiThread { statusText.text = "מחפש התאמה…" }
+                return
+            }
+
+            val live = if (requireBlink) advanceBlink(r) else true
+            if (!live) {
+                runOnUiThread { statusText.setText(R.string.test_blink) }
+                return
+            }
+
+            finished = true
+            runOnUiThread {
+                statusText.setText(R.string.test_success)
+                statusText.setTextColor(ContextCompat.getColor(this, R.color.success))
             }
         } catch (_: Exception) {
         } finally {
@@ -88,32 +100,18 @@ class EnrollActivity : AppCompatActivity() {
         }
     }
 
-    /** Keep angles varied: only add a sample sufficiently different from existing ones. */
-    private fun isDistinct(e: FloatArray): Boolean {
-        if (samples.isEmpty()) return true
-        val maxSim = samples.maxOf { FaceRecognizer.cosineSimilarity(it, e) }
-        return maxSim < 0.97f
-    }
-
-    private fun updateProgress() {
-        progressText.text = "${samples.size} / $target"
-        val enough = samples.isNotEmpty()
-        btnSave.isEnabled = enough
-        progressText.setTextColor(
-            if (samples.size >= target) ContextCompat.getColor(this, R.color.success)
-            else Color.parseColor("#00D9B2")
-        )
-    }
-
-    private fun save() {
-        if (samples.isEmpty()) {
-            Toast.makeText(this, "עדיין לא נלכדו פנים", Toast.LENGTH_SHORT).show()
-            return
+    private fun advanceBlink(r: FaceResult): Boolean {
+        val l = r.leftEyeOpen; val rr = r.rightEyeOpen
+        if (l < 0f || rr < 0f) return false
+        val open = l > Constants.EYE_OPEN && rr > Constants.EYE_OPEN
+        val closed = l < Constants.EYE_CLOSED && rr < Constants.EYE_CLOSED
+        when (blink) {
+            Blink.WAIT_OPEN_1 -> if (open) blink = Blink.WAIT_CLOSE
+            Blink.WAIT_CLOSE -> if (closed) blink = Blink.WAIT_OPEN_2
+            Blink.WAIT_OPEN_2 -> if (open) blink = Blink.DONE
+            Blink.DONE -> {}
         }
-        val prefs = Prefs(this)
-        samples.forEach { prefs.addEmbedding(it) }
-        Toast.makeText(this, "נשמרו ${samples.size} דגימות", Toast.LENGTH_SHORT).show()
-        finish()
+        return blink == Blink.DONE
     }
 
     override fun onDestroy() {
