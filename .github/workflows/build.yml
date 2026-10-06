@@ -1,0 +1,67 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools" >/dev/null
+
+      - name: Fetch face-embedding model
+        run: |
+          set -e
+          mkdir -p app/src/main/assets
+          OUT=app/src/main/assets/mobile_face_net.tflite
+          # Candidate MobileFaceNet sources, tried in order.
+          URLS=(
+            "https://github.com/estebanuri/face_recognition/raw/master/android/facerecognition/app/src/main/assets/mobile_face_net.tflite"
+            "https://github.com/shubham0204/FaceRecognition_With_FaceNet_Android/raw/master/app/src/main/assets/mobile_face_net.tflite"
+            "https://github.com/dedoogong/FaceRecognition_With_MobileFaceNet/raw/master/app/src/main/assets/mobile_face_net.tflite"
+          )
+          ok=0
+          for u in "${URLS[@]}"; do
+            echo "Trying $u"
+            if curl -fsSL "$u" -o "$OUT" && [ "$(wc -c < "$OUT")" -gt 1000000 ] \
+               && [ "$(dd if="$OUT" bs=1 skip=4 count=4 2>/dev/null)" = "TFL3" ]; then
+              echo "Got a valid MobileFaceNet model from $u"
+              ok=1; break
+            fi
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::warning::MobileFaceNet unavailable; falling back to Google MobileNetV3 embedder (weaker identity separation)."
+            curl -fsSL "https://storage.googleapis.com/mediapipe-models/image_embedder/mobilenet_v3_small/float32/1/mobilenet_v3_small.tflite" -o "$OUT"
+          fi
+          ls -la "$OUT"
+          [ "$(dd if="$OUT" bs=1 skip=4 count=4 2>/dev/null)" = "TFL3" ] || { echo "No valid TFLite model"; exit 1; }
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: faceunlock-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
